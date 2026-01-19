@@ -169,8 +169,25 @@ get_user_input() {
     EMBY_SSL=${EMBY_SSL:-N}
     if [[ "$EMBY_SSL" =~ ^[Yy]$ ]]; then
         EMBY_PROTO="https"
+        # 如果是 HTTPS 且端口是默认的 8096，提示改为 443
+        if [[ "$EMBY_PORT" == "8096" ]]; then
+            read -p "源站是 HTTPS，端口是否为 443? [Y/n]: " USE_443
+            USE_443=${USE_443:-Y}
+            if [[ "$USE_443" =~ ^[Yy]$ ]]; then
+                EMBY_PORT="443"
+            fi
+        fi
     else
         EMBY_PROTO="http"
+    fi
+    
+    # 是否传递源站 Host（反代其他域名时需要）
+    read -p "是否传递源站原始 Host 头? (反代其他域名时选 y) [y/N]: " PASS_HOST
+    PASS_HOST=${PASS_HOST:-N}
+    if [[ "$PASS_HOST" =~ ^[Yy]$ ]]; then
+        PROXY_HOST="$EMBY_HOST"
+    else
+        PROXY_HOST="\\\$host"
     fi
     
     # 邮箱 (用于 SSL 证书)
@@ -255,7 +272,7 @@ $SSL_PROXY_CONFIG
     location / {
         proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -273,7 +290,7 @@ $SSL_PROXY_CONFIG
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -283,7 +300,7 @@ $SSL_PROXY_CONFIG
 
     location ~* ^/videos/.*\$ {
         proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -295,7 +312,7 @@ $SSL_PROXY_CONFIG
 
     location ~* ^/Items/.*/Images/.*\$ {
         proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_cache_valid 200 30d;
@@ -383,7 +400,7 @@ $SSL_PROXY_CONFIG
     location / {
         proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -401,7 +418,7 @@ $SSL_PROXY_CONFIG
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -411,7 +428,7 @@ $SSL_PROXY_CONFIG
 
     location ~* ^/videos/.*\$ {
         proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -423,7 +440,7 @@ $SSL_PROXY_CONFIG
 
     location ~* ^/Items/.*/Images/.*\$ {
         proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $PROXY_HOST;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_cache_valid 200 30d;
