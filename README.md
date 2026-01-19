@@ -24,14 +24,14 @@
 
 ```bash
 # 下载并运行脚本
-bash <(curl -sL https://github.com/liuerao/Emby-proxy/blob/main/emby-proxy.sh)
+bash <(curl -sL (https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-proxy.sh)
 ```
 
 ### 方法二：手动下载运行
 
 ```bash
 # 下载脚本
-wget -O emby-proxy.sh https://github.com/liuerao/Emby-proxy/blob/main/emby-proxy.sh
+wget -O emby-proxy.sh https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-proxy.sh
 
 # 添加执行权限
 chmod +x emby-proxy.sh
