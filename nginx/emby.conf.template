@@ -1,0 +1,2 @@
+# Emby 反向代理配置模板
+# 此文件由 docker-entrypoint.sh 在运行时生成实际配置
