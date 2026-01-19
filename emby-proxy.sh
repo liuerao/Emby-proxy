@@ -3,7 +3,7 @@
 #===============================================================================
 # Emby 全自动反向代理一键部署脚本 v2.0
 # 支持: Nginx 反代 + SSL证书自动申请 + 自动续期
-# 使用 acme.sh 申请证书
+# 使用 acme.sh 申请证书（比 Certbot 更稳定）
 #===============================================================================
 
 set -e
@@ -583,15 +583,9 @@ show_completion_info() {
     print_success "Emby 反向代理部署完成！"
 }
 
-# 卸载功能
-uninstall() {
-    print_warning "开始卸载 Emby 反向代理..."
-    
-    read -p "确定要卸载吗? [y/N]: " CONFIRM
-    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        print_info "已取消卸载"
-        exit 0
-    fi
+# 卸载功能 - 仅卸载配置
+uninstall_config() {
+    print_warning "开始卸载 Emby 反向代理配置..."
     
     # 停止服务
     systemctl stop nginx 2>/dev/null || true
@@ -601,8 +595,138 @@ uninstall() {
     rm -f /etc/nginx/sites-enabled/emby
     rm -rf /etc/nginx/ssl
     
-    print_success "卸载完成"
-    print_info "注意: Nginx 和 acme.sh 未被卸载，如需卸载请手动执行"
+    # 恢复默认配置
+    if [ -f /etc/nginx/sites-available/default ]; then
+        ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default 2>/dev/null || true
+    fi
+    
+    # 重启 nginx
+    systemctl start nginx 2>/dev/null || true
+    
+    print_success "Emby 反向代理配置已卸载"
+    print_info "Nginx 和 acme.sh 保留，如需完全卸载请选择「完全卸载」"
+}
+
+# 完全卸载 - 包括 Nginx 和 acme.sh
+uninstall_all() {
+    print_warning "开始完全卸载 (Nginx + acme.sh + 所有配置)..."
+    
+    echo ""
+    print_warning "此操作将卸载以下组件:"
+    echo "  - Nginx 及其所有配置"
+    echo "  - acme.sh 及其所有证书"
+    echo "  - Emby 反向代理配置"
+    echo ""
+    
+    read -p "确定要完全卸载吗? 输入 'YES' 确认: " CONFIRM
+    if [[ "$CONFIRM" != "YES" ]]; then
+        print_info "已取消卸载"
+        return
+    fi
+    
+    print_info "正在停止服务..."
+    
+    # 停止 Nginx
+    systemctl stop nginx 2>/dev/null || true
+    systemctl disable nginx 2>/dev/null || true
+    
+    # 卸载 acme.sh
+    print_info "正在卸载 acme.sh..."
+    if [ -f ~/.acme.sh/acme.sh ]; then
+        # 撤销所有证书的续期任务
+        ~/.acme.sh/acme.sh --uninstall 2>/dev/null || true
+        rm -rf ~/.acme.sh
+        print_success "acme.sh 已卸载"
+    else
+        print_info "acme.sh 未安装，跳过"
+    fi
+    
+    # 删除 acme.sh 的 cron 任务
+    crontab -l 2>/dev/null | grep -v "acme.sh" | crontab - 2>/dev/null || true
+    
+    # 卸载 Nginx
+    print_info "正在卸载 Nginx..."
+    
+    # 检测系统类型
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+    elif [ -f /etc/redhat-release ]; then
+        OS="centos"
+    fi
+    
+    case $OS in
+        ubuntu|debian)
+            apt remove -y nginx nginx-common nginx-full 2>/dev/null || true
+            apt purge -y nginx nginx-common nginx-full 2>/dev/null || true
+            apt autoremove -y 2>/dev/null || true
+            ;;
+        centos|rhel|fedora|rocky|almalinux)
+            if command -v dnf &> /dev/null; then
+                dnf remove -y nginx 2>/dev/null || true
+            else
+                yum remove -y nginx 2>/dev/null || true
+            fi
+            ;;
+        *)
+            print_warning "无法自动卸载 Nginx，请手动卸载"
+            ;;
+    esac
+    
+    # 删除 Nginx 配置和日志目录
+    print_info "正在清理配置文件..."
+    rm -rf /etc/nginx
+    rm -rf /var/log/nginx
+    rm -rf /var/www/html/.well-known
+    
+    # 删除 SSL 证书目录
+    rm -rf /etc/nginx/ssl
+    
+    echo ""
+    print_success "╔═══════════════════════════════════════════════════════════════╗"
+    print_success "║                    完全卸载完成！                             ║"
+    print_success "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  已卸载:"
+    echo "    ✓ Nginx"
+    echo "    ✓ acme.sh"
+    echo "    ✓ SSL 证书"
+    echo "    ✓ Emby 反向代理配置"
+    echo ""
+}
+
+# 卸载菜单
+uninstall_menu() {
+    echo ""
+    print_warning "请选择卸载方式:"
+    echo ""
+    echo "  1) 仅卸载 Emby 配置 (保留 Nginx 和 acme.sh)"
+    echo "  2) 完全卸载 (Nginx + acme.sh + 所有配置)"
+    echo "  0) 返回主菜单"
+    echo ""
+    
+    read -p "请输入选项 [0-2]: " UNINSTALL_OPTION
+    
+    case $UNINSTALL_OPTION in
+        1)
+            read -p "确定要卸载 Emby 配置吗? [y/N]: " CONFIRM
+            if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+                uninstall_config
+            else
+                print_info "已取消"
+            fi
+            ;;
+        2)
+            uninstall_all
+            ;;
+        0)
+            main_menu
+            ;;
+        *)
+            print_error "无效选项"
+            uninstall_menu
+            ;;
+    esac
 }
 
 # 主菜单
@@ -610,30 +734,34 @@ main_menu() {
     echo "请选择操作:"
     echo ""
     echo "  1) 安装 Emby 反向代理"
-    echo "  2) 卸载 Emby 反向代理"
+    echo "  2) 卸载"
     echo "  3) 重新配置"
     echo "  4) 查看状态"
     echo "  5) 仅申请/续期 SSL 证书"
+    echo "  6) 查看当前配置"
     echo "  0) 退出"
     echo ""
     
-    read -p "请输入选项 [0-5]: " OPTION
+    read -p "请输入选项 [0-6]: " OPTION
     
     case $OPTION in
         1)
             install_proxy
             ;;
         2)
-            uninstall
+            uninstall_menu
             ;;
         3)
             install_proxy
             ;;
         4)
-            systemctl status nginx
+            show_status
             ;;
         5)
             renew_ssl_only
+            ;;
+        6)
+            show_current_config
             ;;
         0)
             exit 0
@@ -666,6 +794,83 @@ renew_ssl_only() {
     print_success "证书已更新"
 }
 
+# 查看状态
+show_status() {
+    echo ""
+    print_info "========== 服务状态 =========="
+    echo ""
+    
+    # Nginx 状态
+    echo -e "${CYAN}Nginx 状态:${NC}"
+    if systemctl is-active --quiet nginx; then
+        echo -e "  状态: ${GREEN}运行中${NC}"
+    else
+        echo -e "  状态: ${RED}未运行${NC}"
+    fi
+    
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then
+        echo -e "  开机启动: ${GREEN}已启用${NC}"
+    else
+        echo -e "  开机启动: ${YELLOW}未启用${NC}"
+    fi
+    echo ""
+    
+    # acme.sh 状态
+    echo -e "${CYAN}acme.sh 状态:${NC}"
+    if [ -f ~/.acme.sh/acme.sh ]; then
+        echo -e "  状态: ${GREEN}已安装${NC}"
+        echo "  证书列表:"
+        ~/.acme.sh/acme.sh --list 2>/dev/null | head -20 || echo "    无证书"
+    else
+        echo -e "  状态: ${YELLOW}未安装${NC}"
+    fi
+    echo ""
+    
+    # 端口监听
+    echo -e "${CYAN}端口监听:${NC}"
+    if command -v ss &> /dev/null; then
+        ss -tlnp | grep -E ':80|:443' | head -5 || echo "  未检测到 80/443 端口监听"
+    elif command -v netstat &> /dev/null; then
+        netstat -tlnp | grep -E ':80|:443' | head -5 || echo "  未检测到 80/443 端口监听"
+    fi
+    echo ""
+    
+    # 配置文件
+    echo -e "${CYAN}配置文件:${NC}"
+    if [ -f /etc/nginx/sites-available/emby ]; then
+        echo -e "  Emby 配置: ${GREEN}存在${NC}"
+    else
+        echo -e "  Emby 配置: ${YELLOW}不存在${NC}"
+    fi
+    
+    if [ -d /etc/nginx/ssl ] && [ "$(ls -A /etc/nginx/ssl 2>/dev/null)" ]; then
+        echo -e "  SSL 证书: ${GREEN}已配置${NC}"
+        ls /etc/nginx/ssl/ 2>/dev/null | while read dir; do
+            echo "    - $dir"
+        done
+    else
+        echo -e "  SSL 证书: ${YELLOW}未配置${NC}"
+    fi
+    echo ""
+}
+
+# 查看当前配置
+show_current_config() {
+    echo ""
+    print_info "========== 当前配置 =========="
+    echo ""
+    
+    if [ -f /etc/nginx/sites-available/emby ]; then
+        echo -e "${CYAN}Nginx 配置文件: /etc/nginx/sites-available/emby${NC}"
+        echo "----------------------------------------"
+        cat /etc/nginx/sites-available/emby
+        echo "----------------------------------------"
+    else
+        print_warning "未找到 Emby 配置文件"
+    fi
+    echo ""
+}
+
 # 安装主流程
 install_proxy() {
     check_root
@@ -696,24 +901,67 @@ install_proxy() {
     show_completion_info
 }
 
+# 显示帮助
+show_help() {
+    echo "Emby 反向代理一键部署脚本 v2.0"
+    echo ""
+    echo "用法: $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  -i, --install       直接安装 (跳过菜单)"
+    echo "  -u, --uninstall     卸载 Emby 配置 (保留 Nginx)"
+    echo "  --uninstall-all     完全卸载 (Nginx + acme.sh + 配置)"
+    echo "  -s, --status        查看状态"
+    echo "  -h, --help          显示此帮助"
+    echo ""
+    echo "示例:"
+    echo "  $0                  显示交互式菜单"
+    echo "  $0 -i               直接开始安装"
+    echo "  $0 --uninstall-all  完全卸载所有组件"
+    echo ""
+}
+
 # 脚本入口
 main() {
     print_banner
     
     # 检查参数
-    if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
-        check_root
-        uninstall
-        exit 0
-    fi
-    
-    if [ "$1" = "--install" ] || [ "$1" = "-i" ]; then
-        install_proxy
-        exit 0
-    fi
-    
-    # 显示主菜单
-    main_menu
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -i|--install)
+            install_proxy
+            exit 0
+            ;;
+        -u|--uninstall)
+            check_root
+            read -p "确定要卸载 Emby 配置吗? [y/N]: " CONFIRM
+            if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+                uninstall_config
+            fi
+            exit 0
+            ;;
+        --uninstall-all)
+            check_root
+            uninstall_all
+            exit 0
+            ;;
+        -s|--status)
+            show_status
+            exit 0
+            ;;
+        "")
+            # 无参数，显示主菜单
+            main_menu
+            ;;
+        *)
+            print_error "未知选项: $1"
+            show_help
+            exit 1
+            ;;
+    esac
 }
 
 main "$@"
