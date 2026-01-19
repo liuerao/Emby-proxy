@@ -24,7 +24,7 @@
 
 ```bash
 # 下载并运行脚本
-bash <(curl -sL (https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-proxy.sh)
+bash <(https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-proxy.sh)
 ```
 
 ### 方法二：手动下载运行
