@@ -36,7 +36,7 @@ bash <(curl -sL https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-p
 运行脚本后，按照提示输入以下信息：
 
 1. **域名**：你的反代域名（如 `emby.example.com`）
-2. **Emby 源站地址**：Emby 服务器的域名（如 `emos.best`，不带 https://）
+2. **Emby 源站地址**：Emby 服务器的域名（如 `emby.example.com`，不带 https://）
 3. **Emby 源站端口**：默认 443（HTTPS）或 8096（HTTP）
 4. **源站是否 HTTPS**：如果源站是 https:// 开头，选 y
 5. **是否传递源站 Host 头**：反代其他域名时选 y（重要！）
@@ -47,7 +47,7 @@ bash <(curl -sL https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-p
 
 ```
 域名: emby.mydomain.com
-Emby 源站地址: emos.best
+Emby 源站地址: emby.example.com
 Emby 源站端口: 443
 源站使用 HTTPS: y
 传递源站 Host 头: y    ← 反代其他域名必选 y
@@ -66,9 +66,9 @@ docker run -d \
   --name emby-proxy \
   -p 80:80 \
   -p 443:443 \
-  -e EMBY_HOST=emos.best \
+  -e EMBY_HOST=emby.example.com \
   -e EMBY_PROTO=https \
-  -e PROXY_HOST=emos.best \
+  -e PROXY_HOST=emby.example.com \
   -e DOMAIN=your-domain.com \
   ghcr.io/liuerao/emby-proxy:latest
 ```
@@ -89,9 +89,9 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      - EMBY_HOST=emos.best
+      - EMBY_HOST=emby.example.com
       - EMBY_PROTO=https
-      - PROXY_HOST=emos.best
+      - PROXY_HOST=emby.example.com
       - DOMAIN=your-domain.com
       - TZ=Asia/Shanghai
     volumes:
@@ -129,9 +129,9 @@ docker run -d \
   --name emby-proxy \
   -p 80:80 \
   -p 443:443 \
-  -e EMBY_HOST=emos.best \
+  -e EMBY_HOST=emby.example.com \
   -e EMBY_PROTO=https \
-  -e PROXY_HOST=emos.best \
+  -e PROXY_HOST=emby.example.com \
   -e DOMAIN=emby.mydomain.com \
   -v /path/to/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro \
   -v /path/to/privkey.pem:/etc/nginx/ssl/privkey.pem:ro \
