@@ -105,7 +105,7 @@ services:
 2. 启动服务：
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 环境变量说明
