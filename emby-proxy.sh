@@ -3,7 +3,7 @@
 #===============================================================================
 # Emby 全自动反向代理一键部署脚本 v2.0
 # 支持: Nginx 反代 + SSL证书自动申请 + 自动续期
-# 使用 acme.sh 申请证书
+# 使用 acme.sh 申请证书（比 Certbot 更稳定）
 #===============================================================================
 
 set -e
@@ -164,6 +164,15 @@ get_user_input() {
     read -p "请输入 Emby 源站端口 [默认: 8096]: " EMBY_PORT
     EMBY_PORT=${EMBY_PORT:-8096}
     
+    # 源站协议
+    read -p "Emby 源站使用 HTTPS 吗? [y/N]: " EMBY_SSL
+    EMBY_SSL=${EMBY_SSL:-N}
+    if [[ "$EMBY_SSL" =~ ^[Yy]$ ]]; then
+        EMBY_PROTO="https"
+    else
+        EMBY_PROTO="http"
+    fi
+    
     # 邮箱 (用于 SSL 证书)
     while true; do
         read -p "请输入邮箱 (用于 SSL 证书申请): " EMAIL
@@ -181,7 +190,7 @@ get_user_input() {
     echo ""
     print_info "配置信息确认:"
     echo "  域名: $DOMAIN"
-    echo "  Emby 源站: $EMBY_HOST:$EMBY_PORT"
+    echo "  Emby 源站: $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT"
     echo "  邮箱: $EMAIL"
     echo "  启用 SSL: $ENABLE_SSL"
     echo ""
@@ -203,13 +212,17 @@ create_nginx_config_http() {
     mkdir -p /etc/nginx/sites-enabled
     mkdir -p /var/www/html/.well-known/acme-challenge
     
+    # 如果源站是 HTTPS，添加 SSL 验证跳过配置
+    if [[ "$EMBY_PROTO" == "https" ]]; then
+        SSL_PROXY_CONFIG="
+    proxy_ssl_verify off;
+    proxy_ssl_server_name on;"
+    else
+        SSL_PROXY_CONFIG=""
+    fi
+
     cat > /etc/nginx/sites-available/emby << EOF
 # Emby 反向代理配置 - HTTP
-upstream emby_backend {
-    server $EMBY_HOST:$EMBY_PORT;
-    keepalive 32;
-}
-
 server {
     listen 80;
     listen [::]:80;
@@ -237,9 +250,10 @@ server {
     proxy_send_timeout 600s;
     proxy_read_timeout 600s;
     send_timeout 600s;
+$SSL_PROXY_CONFIG
 
     location / {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -255,7 +269,7 @@ server {
     }
 
     location /embywebsocket {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -268,7 +282,7 @@ server {
     }
 
     location ~* ^/videos/.*\$ {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -280,7 +294,7 @@ server {
     }
 
     location ~* ^/Items/.*/Images/.*\$ {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -298,12 +312,17 @@ EOF
 create_nginx_config_https() {
     print_info "创建 Nginx HTTPS 配置..."
     
+    # 如果源站是 HTTPS，添加 SSL 验证跳过配置
+    if [[ "$EMBY_PROTO" == "https" ]]; then
+        SSL_PROXY_CONFIG="
+    proxy_ssl_verify off;
+    proxy_ssl_server_name on;"
+    else
+        SSL_PROXY_CONFIG=""
+    fi
+
     cat > /etc/nginx/sites-available/emby << EOF
 # Emby 反向代理配置 - HTTPS
-upstream emby_backend {
-    server $EMBY_HOST:$EMBY_PORT;
-    keepalive 32;
-}
 
 # HTTP 重定向到 HTTPS
 server {
@@ -359,9 +378,10 @@ server {
     proxy_send_timeout 600s;
     proxy_read_timeout 600s;
     send_timeout 600s;
+$SSL_PROXY_CONFIG
 
     location / {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -377,7 +397,7 @@ server {
     }
 
     location /embywebsocket {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -390,7 +410,7 @@ server {
     }
 
     location ~* ^/videos/.*\$ {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -402,7 +422,7 @@ server {
     }
 
     location ~* ^/Items/.*/Images/.*\$ {
-        proxy_pass http://emby_backend;
+        proxy_pass $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
