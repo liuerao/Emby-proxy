@@ -1,0 +1,14 @@
+# 确保 shell 脚本使用 Unix 换行符 (LF)
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Dockerfile 使用 Unix 换行符
+Dockerfile text eol=lf
+
+# nginx 配置文件使用 Unix 换行符
+nginx/*.conf text eol=lf
+nginx/*.template text eol=lf
+
+# YAML 文件
+*.yml text eol=lf
+*.yaml text eol=lf
