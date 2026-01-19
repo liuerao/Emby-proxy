@@ -1,10 +1,9 @@
 #!/bin/bash
 
 #===============================================================================
-# Emby 全自动反向代理一键部署脚本
+# Emby 全自动反向代理一键部署脚本 v2.0
 # 支持: Nginx 反代 + SSL证书自动申请 + 自动续期
-# 作者: Auto Generated
-# 使用: bash <(curl -sL https://your-domain.com/emby-proxy.sh)
+# 使用 acme.sh 申请证书（比 Certbot 更稳定）
 #===============================================================================
 
 set -e
@@ -16,9 +15,8 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# 打印带颜色的信息
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -38,8 +36,8 @@ print_error() {
 print_banner() {
     echo -e "${PURPLE}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║         Emby 全自动反向代理一键部署脚本 v1.0                  ║"
-    echo "║         支持 Nginx + SSL + 自动续期                          ║"
+    echo "║         Emby 全自动反向代理一键部署脚本 v2.0                  ║"
+    echo "║         支持 Nginx + SSL (acme.sh) + 自动续期                 ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -75,15 +73,15 @@ install_dependencies() {
     case $OS in
         ubuntu|debian)
             apt update -y
-            apt install -y nginx certbot python3-certbot-nginx curl wget
+            apt install -y nginx curl wget socat cron
             ;;
         centos|rhel|fedora|rocky|almalinux)
-            if [ "$OS" = "centos" ] && [ "${VERSION%%.*}" -ge 8 ]; then
+            if command -v dnf &> /dev/null; then
                 dnf install -y epel-release
-                dnf install -y nginx certbot python3-certbot-nginx curl wget
+                dnf install -y nginx curl wget socat cronie
             else
                 yum install -y epel-release
-                yum install -y nginx certbot python3-certbot-nginx curl wget
+                yum install -y nginx curl wget socat cronie
             fi
             ;;
         *)
@@ -95,15 +93,31 @@ install_dependencies() {
     print_success "依赖安装完成"
 }
 
+# 安装 acme.sh
+install_acme() {
+    print_info "安装 acme.sh..."
+    
+    if [ -f ~/.acme.sh/acme.sh ]; then
+        print_info "acme.sh 已安装，更新中..."
+        ~/.acme.sh/acme.sh --upgrade
+    else
+        curl https://get.acme.sh | sh -s email=$EMAIL
+    fi
+    
+    # 设置默认 CA 为 Let's Encrypt
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+    
+    print_success "acme.sh 安装完成"
+}
+
 # 配置防火墙
 configure_firewall() {
     print_info "配置防火墙..."
     
     # 检查 ufw
-    if command -v ufw &> /dev/null; then
+    if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
         ufw allow 80/tcp
         ufw allow 443/tcp
-        ufw allow $PROXY_PORT/tcp 2>/dev/null || true
         print_success "UFW 防火墙已配置"
     fi
     
@@ -111,16 +125,14 @@ configure_firewall() {
     if command -v firewall-cmd &> /dev/null && systemctl is-active --quiet firewalld; then
         firewall-cmd --permanent --add-service=http
         firewall-cmd --permanent --add-service=https
-        firewall-cmd --permanent --add-port=$PROXY_PORT/tcp 2>/dev/null || true
         firewall-cmd --reload
         print_success "Firewalld 防火墙已配置"
     fi
     
-    # 检查 iptables
+    # iptables
     if command -v iptables &> /dev/null; then
         iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
         iptables -I INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
-        iptables -I INPUT -p tcp --dport $PROXY_PORT -j ACCEPT 2>/dev/null || true
     fi
 }
 
@@ -152,10 +164,6 @@ get_user_input() {
     read -p "请输入 Emby 源站端口 [默认: 8096]: " EMBY_PORT
     EMBY_PORT=${EMBY_PORT:-8096}
     
-    # 反代端口
-    read -p "请输入反代监听端口 [默认: 443]: " PROXY_PORT
-    PROXY_PORT=${PROXY_PORT:-443}
-    
     # 邮箱 (用于 SSL 证书)
     while true; do
         read -p "请输入邮箱 (用于 SSL 证书申请): " EMAIL
@@ -174,7 +182,6 @@ get_user_input() {
     print_info "配置信息确认:"
     echo "  域名: $DOMAIN"
     echo "  Emby 源站: $EMBY_HOST:$EMBY_PORT"
-    echo "  反代端口: $PROXY_PORT"
     echo "  邮箱: $EMAIL"
     echo "  启用 SSL: $ENABLE_SSL"
     echo ""
@@ -187,21 +194,31 @@ get_user_input() {
     fi
 }
 
-# 创建 Nginx 配置 (HTTP)
+# 创建 Nginx HTTP 配置（用于证书申请）
 create_nginx_config_http() {
     print_info "创建 Nginx HTTP 配置..."
     
-    cat > /etc/nginx/sites-available/emby << 'NGINX_EOF'
+    # 创建目录
+    mkdir -p /etc/nginx/sites-available
+    mkdir -p /etc/nginx/sites-enabled
+    mkdir -p /var/www/html/.well-known/acme-challenge
+    
+    cat > /etc/nginx/sites-available/emby << EOF
 # Emby 反向代理配置 - HTTP
 upstream emby_backend {
-    server EMBY_HOST_PLACEHOLDER:EMBY_PORT_PLACEHOLDER;
+    server $EMBY_HOST:$EMBY_PORT;
     keepalive 32;
 }
 
 server {
     listen 80;
     listen [::]:80;
-    server_name DOMAIN_PLACEHOLDER;
+    server_name $DOMAIN;
+
+    # acme.sh 验证目录
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
 
     # 日志
     access_log /var/log/nginx/emby_access.log;
@@ -224,79 +241,67 @@ server {
     location / {
         proxy_pass http://emby_backend;
         
-        # 代理头设置
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port \$server_port;
         
-        # WebSocket 支持
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        
-        # 缓存设置
-        proxy_cache_bypass $http_upgrade;
+        proxy_cache_bypass \$http_upgrade;
     }
 
-    # WebSocket 专用路径
     location /embywebsocket {
         proxy_pass http://emby_backend;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
     }
 
-    # 视频流优化
-    location ~* ^/videos/.*$ {
+    location ~* ^/videos/.*\$ {
         proxy_pass http://emby_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_buffering off;
         proxy_request_buffering off;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
 
-    # 图片缓存
-    location ~* ^/Items/.*/Images/.*$ {
+    location ~* ^/Items/.*/Images/.*\$ {
         proxy_pass http://emby_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_cache_valid 200 30d;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
 }
-NGINX_EOF
+EOF
 
-    # 替换占位符
-    sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" /etc/nginx/sites-available/emby
-    sed -i "s/EMBY_HOST_PLACEHOLDER/$EMBY_HOST/g" /etc/nginx/sites-available/emby
-    sed -i "s/EMBY_PORT_PLACEHOLDER/$EMBY_PORT/g" /etc/nginx/sites-available/emby
-    
     print_success "Nginx HTTP 配置创建完成"
 }
 
-# 创建 Nginx 配置 (HTTPS)
+# 创建 Nginx HTTPS 配置
 create_nginx_config_https() {
     print_info "创建 Nginx HTTPS 配置..."
     
-    cat > /etc/nginx/sites-available/emby << 'NGINX_EOF'
+    cat > /etc/nginx/sites-available/emby << EOF
 # Emby 反向代理配置 - HTTPS
 upstream emby_backend {
-    server EMBY_HOST_PLACEHOLDER:EMBY_PORT_PLACEHOLDER;
+    server $EMBY_HOST:$EMBY_PORT;
     keepalive 32;
 }
 
@@ -304,26 +309,27 @@ upstream emby_backend {
 server {
     listen 80;
     listen [::]:80;
-    server_name DOMAIN_PLACEHOLDER;
+    server_name $DOMAIN;
     
+    # acme.sh 续期验证
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
     
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://\$host\$request_uri;
     }
 }
 
 # HTTPS 配置
 server {
-    listen PROXY_PORT_PLACEHOLDER ssl http2;
-    listen [::]:PROXY_PORT_PLACEHOLDER ssl http2;
-    server_name DOMAIN_PLACEHOLDER;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $DOMAIN;
 
-    # SSL 证书
-    ssl_certificate /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/privkey.pem;
+    # SSL 证书 (acme.sh)
+    ssl_certificate /etc/nginx/ssl/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/$DOMAIN/privkey.pem;
     
     # SSL 优化配置
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -357,69 +363,56 @@ server {
     location / {
         proxy_pass http://emby_backend;
         
-        # 代理头设置
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port \$server_port;
         
-        # WebSocket 支持
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        
-        # 缓存设置
-        proxy_cache_bypass $http_upgrade;
+        proxy_cache_bypass \$http_upgrade;
     }
 
-    # WebSocket 专用路径
     location /embywebsocket {
         proxy_pass http://emby_backend;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
     }
 
-    # 视频流优化
-    location ~* ^/videos/.*$ {
+    location ~* ^/videos/.*\$ {
         proxy_pass http://emby_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_buffering off;
         proxy_request_buffering off;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
 
-    # 图片缓存
-    location ~* ^/Items/.*/Images/.*$ {
+    location ~* ^/Items/.*/Images/.*\$ {
         proxy_pass http://emby_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_cache_valid 200 30d;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
 }
-NGINX_EOF
+EOF
 
-    # 替换占位符
-    sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" /etc/nginx/sites-available/emby
-    sed -i "s/EMBY_HOST_PLACEHOLDER/$EMBY_HOST/g" /etc/nginx/sites-available/emby
-    sed -i "s/EMBY_PORT_PLACEHOLDER/$EMBY_PORT/g" /etc/nginx/sites-available/emby
-    sed -i "s/PROXY_PORT_PLACEHOLDER/$PROXY_PORT/g" /etc/nginx/sites-available/emby
-    
     print_success "Nginx HTTPS 配置创建完成"
 }
 
@@ -427,16 +420,13 @@ NGINX_EOF
 enable_site() {
     print_info "启用站点配置..."
     
-    # 创建 sites-enabled 目录（如果不存在）
-    mkdir -p /etc/nginx/sites-enabled
-    
     # 检查 nginx.conf 是否包含 sites-enabled
     if ! grep -q "sites-enabled" /etc/nginx/nginx.conf; then
         # 在 http 块中添加 include
         sed -i '/http {/a\    include /etc/nginx/sites-enabled/*;' /etc/nginx/nginx.conf
     fi
     
-    # 删除默认站点（如果存在）
+    # 删除默认站点
     rm -f /etc/nginx/sites-enabled/default
     
     # 创建符号链接
@@ -448,45 +438,60 @@ enable_site() {
     print_success "站点配置已启用"
 }
 
-# 申请 SSL 证书
+# 使用 acme.sh 申请 SSL 证书
 obtain_ssl_certificate() {
-    print_info "申请 SSL 证书..."
+    print_info "申请 SSL 证书 (使用 acme.sh)..."
     
-    # 先启动 nginx 用于验证
-    systemctl start nginx || true
+    # 创建证书目录
+    mkdir -p /etc/nginx/ssl/$DOMAIN
     
-    # 申请证书
-    certbot certonly --nginx -d $DOMAIN --email $EMAIL --agree-tos --non-interactive --redirect
+    # 确保 nginx 正在运行
+    systemctl restart nginx
+    sleep 2
     
-    if [ $? -eq 0 ]; then
-        print_success "SSL 证书申请成功"
-    else
-        print_error "SSL 证书申请失败，请检查域名解析是否正确"
-        exit 1
+    # 使用 webroot 方式申请证书
+    ~/.acme.sh/acme.sh --issue \
+        -d $DOMAIN \
+        --webroot /var/www/html \
+        --keylength ec-256 \
+        --force
+    
+    if [ $? -ne 0 ]; then
+        print_warning "webroot 方式失败，尝试 standalone 方式..."
+        
+        # 停止 nginx，使用 standalone 方式
+        systemctl stop nginx
+        
+        ~/.acme.sh/acme.sh --issue \
+            -d $DOMAIN \
+            --standalone \
+            --keylength ec-256 \
+            --force
+        
+        if [ $? -ne 0 ]; then
+            print_error "SSL 证书申请失败"
+            print_info "请检查:"
+            print_info "  1. 域名是否正确解析到此服务器 IP"
+            print_info "  2. 80 端口是否被占用或被防火墙阻止"
+            print_info "  3. 可以运行: curl -I http://$DOMAIN 测试"
+            systemctl start nginx
+            exit 1
+        fi
     fi
-}
-
-# 配置证书自动续期
-setup_auto_renewal() {
-    print_info "配置证书自动续期..."
     
-    # 创建续期脚本
-    cat > /etc/cron.d/certbot-renew << 'CRON_EOF'
-# 每天凌晨 3 点检查并续期证书
-0 3 * * * root certbot renew --quiet --post-hook "systemctl reload nginx"
-CRON_EOF
+    # 安装证书到 nginx 目录
+    ~/.acme.sh/acme.sh --install-cert -d $DOMAIN \
+        --key-file /etc/nginx/ssl/$DOMAIN/privkey.pem \
+        --fullchain-file /etc/nginx/ssl/$DOMAIN/fullchain.pem \
+        --reloadcmd "systemctl reload nginx"
     
-    # 测试续期
-    certbot renew --dry-run
-    
-    print_success "证书自动续期已配置"
+    print_success "SSL 证书申请并安装成功"
 }
 
 # 启动服务
 start_services() {
     print_info "启动服务..."
     
-    # 启用并启动 nginx
     systemctl enable nginx
     systemctl restart nginx
     
@@ -526,10 +531,11 @@ show_completion_info() {
     echo ""
     
     if [[ "$ENABLE_SSL" =~ ^[Yy]$ ]]; then
-        echo -e "  ${YELLOW}SSL 证书:${NC}"
-        echo "    证书路径:      /etc/letsencrypt/live/$DOMAIN/"
-        echo "    手动续期:      certbot renew"
-        echo "    自动续期:      已配置 (每天凌晨 3 点检查)"
+        echo -e "  ${YELLOW}SSL 证书 (acme.sh):${NC}"
+        echo "    证书路径:      /etc/nginx/ssl/$DOMAIN/"
+        echo "    查看证书:      ~/.acme.sh/acme.sh --list"
+        echo "    手动续期:      ~/.acme.sh/acme.sh --renew -d $DOMAIN --force"
+        echo "    自动续期:      已配置 (acme.sh 自动处理)"
         echo ""
     fi
     
@@ -552,12 +558,10 @@ uninstall() {
     # 删除配置文件
     rm -f /etc/nginx/sites-available/emby
     rm -f /etc/nginx/sites-enabled/emby
-    
-    # 删除证书续期任务
-    rm -f /etc/cron.d/certbot-renew
+    rm -rf /etc/nginx/ssl
     
     print_success "卸载完成"
-    print_info "注意: Nginx 和 Certbot 未被卸载，如需卸载请手动执行"
+    print_info "注意: Nginx 和 acme.sh 未被卸载，如需卸载请手动执行"
 }
 
 # 主菜单
@@ -570,10 +574,11 @@ main_menu() {
     echo "  2) 卸载 Emby 反向代理"
     echo "  3) 重新配置"
     echo "  4) 查看状态"
+    echo "  5) 仅申请/续期 SSL 证书"
     echo "  0) 退出"
     echo ""
     
-    read -p "请输入选项 [0-4]: " OPTION
+    read -p "请输入选项 [0-5]: " OPTION
     
     case $OPTION in
         1)
@@ -588,6 +593,9 @@ main_menu() {
         4)
             systemctl status nginx
             ;;
+        5)
+            renew_ssl_only
+            ;;
         0)
             exit 0
             ;;
@@ -596,6 +604,27 @@ main_menu() {
             main_menu
             ;;
     esac
+}
+
+# 仅申请/续期 SSL
+renew_ssl_only() {
+    check_root
+    
+    read -p "请输入域名: " DOMAIN
+    read -p "请输入邮箱: " EMAIL
+    
+    install_acme
+    
+    mkdir -p /etc/nginx/ssl/$DOMAIN
+    
+    ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256 --force
+    
+    ~/.acme.sh/acme.sh --install-cert -d $DOMAIN \
+        --key-file /etc/nginx/ssl/$DOMAIN/privkey.pem \
+        --fullchain-file /etc/nginx/ssl/$DOMAIN/fullchain.pem \
+        --reloadcmd "systemctl reload nginx"
+    
+    print_success "证书已更新"
 }
 
 # 安装主流程
@@ -611,16 +640,20 @@ install_proxy() {
         create_nginx_config_http
         enable_site
         start_services
+        
+        # 安装 acme.sh 并申请证书
+        install_acme
         obtain_ssl_certificate
+        
         # 更新为 HTTPS 配置
         create_nginx_config_https
-        setup_auto_renewal
+        start_services
     else
         create_nginx_config_http
         enable_site
+        start_services
     fi
     
-    start_services
     show_completion_info
 }
 
@@ -628,7 +661,7 @@ install_proxy() {
 main() {
     print_banner
     
-    # 检查是否有参数
+    # 检查参数
     if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
         check_root
         uninstall
@@ -644,5 +677,4 @@ main() {
     main_menu
 }
 
-# 运行主函数
 main "$@"
