@@ -28,7 +28,7 @@
 ### 一键部署命令
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/liuerao/Emby-proxy/main/emby-proxy.sh)
+bash <(curl -sL https://raw.githubusercontent.com/gfk-sveyigey/Emby-proxy/main/emby-proxy.sh)
 ```
 
 ### 使用说明
