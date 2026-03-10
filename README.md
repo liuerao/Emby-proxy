@@ -1,6 +1,6 @@
 # Emby 反向代理一键部署
 
-支持 VPS 一键脚本部署和 Docker 部署两种方式。
+支持 VPS 一键脚本部署。
 
 ## 功能特性
 
@@ -16,7 +16,7 @@
 
 ---
 
-## 方式一：VPS 一键脚本部署
+## VPS 一键脚本部署
 
 ### 系统要求
 
@@ -57,89 +57,6 @@ Emby 源站端口: 443
 
 ---
 
-## 方式二：Docker 部署
-
-### 快速开始
-
-```bash
-docker run -d \
-  --name emby-proxy \
-  -p 80:80 \
-  -p 443:443 \
-  -e EMBY_HOST=emby.example.com \
-  -e EMBY_PROTO=https \
-  -e PROXY_HOST=emby.example.com \
-  -e DOMAIN=your-domain.com \
-  ghcr.io/liuerao/emby-proxy:latest
-```
-
-### 使用 Docker Compose
-
-1. 创建 `docker-compose.yml`：
-
-```yaml
-version: '3.8'
-
-services:
-  emby-proxy:
-    image: ghcr.io/liuerao/emby-proxy:latest
-    container_name: emby-proxy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      - EMBY_HOST=emby.example.com
-      - EMBY_PROTO=https
-      - PROXY_HOST=emby.example.com
-      - DOMAIN=your-domain.com
-      - TZ=Asia/Shanghai
-    volumes:
-      # SSL 证书 (可选)
-      - ./certs/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
-      - ./certs/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
-      # 日志 (可选)
-      - ./logs:/var/log/nginx
-```
-
-2. 启动服务：
-
-```bash
-docker compose up -d
-```
-
-### 环境变量说明
-
-| 变量 | 说明 | 默认值 | 必填 |
-|------|------|--------|------|
-| `EMBY_HOST` | Emby 源站地址（不带协议） | emby.example.com | ✅ |
-| `EMBY_PROTO` | 源站协议 (http/https) | https | - |
-| `PROXY_HOST` | 传递给源站的 Host 头 | 同 EMBY_HOST | ✅* |
-| `DOMAIN` | 你的反代域名 | localhost | - |
-| `TZ` | 时区 | Asia/Shanghai | - |
-
-> *注：反代其他域名时 `PROXY_HOST` 必须设置为源站域名
-
-### 挂载 SSL 证书
-
-将证书文件挂载到容器：
-
-```bash
-docker run -d \
-  --name emby-proxy \
-  -p 80:80 \
-  -p 443:443 \
-  -e EMBY_HOST=emby.example.com \
-  -e EMBY_PROTO=https \
-  -e PROXY_HOST=emby.example.com \
-  -e DOMAIN=emby.mydomain.com \
-  -v /path/to/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro \
-  -v /path/to/privkey.pem:/etc/nginx/ssl/privkey.pem:ro \
-  ghcr.io/liuerao/emby-proxy:latest
-```
-
----
-
 ## 常用命令
 
 ### VPS 部署
@@ -156,22 +73,6 @@ tail -f /var/log/nginx/emby_error.log
 
 # 手动续期证书
 ~/.acme.sh/acme.sh --renew -d your-domain.com --force
-```
-
-### Docker 部署
-
-```bash
-# 查看日志
-docker logs -f emby-proxy
-
-# 重启容器
-docker restart emby-proxy
-
-# 查看状态
-docker ps | grep emby-proxy
-
-# 停止并删除
-docker stop emby-proxy && docker rm emby-proxy
 ```
 
 ---
@@ -203,9 +104,12 @@ docker stop emby-proxy && docker rm emby-proxy
 
 ## 更新日志
 
+### v3.0
+- 移除 Docker 支持
+- 添加反代至子域名支持
+
 ### v2.0
 - 添加 Docker 支持
-- 添加 GitHub Actions 自动构建
 - 支持 Cloudflare CDN 源站 (SNI/TLS 1.2+)
 - 修复 502 错误
 - 多架构支持 (amd64/arm64)

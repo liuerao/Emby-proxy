@@ -144,52 +144,78 @@ get_user_input() {
     
     # 域名
     while true; do
-        read -p "请输入你的域名 (例如: emby.example.com): " DOMAIN
+        read -p "请输入你的主域名 (例如: emby.example.com): " DOMAIN
         if [[ -n "$DOMAIN" ]]; then
             break
         fi
         print_error "域名不能为空"
     done
-    
-    # Emby 源站地址
+
+    SUBDOMAINS=()
+    EMBY_HOSTS=()
+    EMBY_PORTS=()
+    EMBY_SSLS=()
+    EMBY_PROTOS=()
+    PROXY_HOSTS=()
+
+    echo "配置源站内容："
+
     while true; do
-        read -p "请输入 Emby 源站地址 (例如: 192.168.1.100 或 emby.source.com): " EMBY_HOST
-        if [[ -n "$EMBY_HOST" ]]; then
+        # 子域名
+        echo "请输入子域名 (例如: emby1 emby2 emby3)，输入空行结束子域名配置:"
+        read -p "> " SUBDOMAIN
+        if [[ -z "$SUBDOMAIN" ]]; then
             break
         fi
-        print_error "源站地址不能为空"
-    done
-    
-    # Emby 源站端口
-    read -p "请输入 Emby 源站端口 [默认: 8096]: " EMBY_PORT
-    EMBY_PORT=${EMBY_PORT:-8096}
-    
-    # 源站协议
-    read -p "Emby 源站使用 HTTPS 吗? [y/N]: " EMBY_SSL
-    EMBY_SSL=${EMBY_SSL:-N}
-    if [[ "$EMBY_SSL" =~ ^[Yy]$ ]]; then
-        EMBY_PROTO="https"
-        # 如果是 HTTPS 且端口是默认的 8096，提示改为 443
-        if [[ "$EMBY_PORT" == "8096" ]]; then
-            read -p "源站是 HTTPS，端口是否为 443? [Y/n]: " USE_443
-            USE_443=${USE_443:-Y}
-            if [[ "$USE_443" =~ ^[Yy]$ ]]; then
-                EMBY_PORT="443"
+
+        # Emby 源站地址
+        while true; do
+            read -p "请输入 Emby 源站地址 (例如: 192.168.1.100 或 emby.source.com): " EMBY_HOST
+            if [[ -n "$EMBY_HOST" ]]; then
+                break
             fi
+            print_error "源站地址不能为空"
+        done
+
+        # Emby 源站端口
+        read -p "请输入 Emby 源站端口 [默认: 8096]: " EMBY_PORT
+        EMBY_PORT=${EMBY_PORT:-8096}
+
+        # 源站协议
+        read -p "Emby 源站使用 HTTPS 吗? [y/N]: " EMBY_SSL
+        EMBY_SSL=${EMBY_SSL:-N}
+        if [[ "$EMBY_SSL" =~ ^[Yy]$ ]]; then
+            EMBY_PROTO="https"
+            # 如果是 HTTPS 且端口是默认的 8096，提示改为 443
+            if [[ "$EMBY_PORT" == "8096" ]]; then
+                read -p "源站是 HTTPS，端口是否为 443? [Y/n]: " USE_443
+                USE_443=${USE_443:-Y}
+                if [[ "$USE_443" =~ ^[Yy]$ ]]; then
+                    EMBY_PORT="443"
+                fi
+            fi
+        else
+            EMBY_PROTO="http"
         fi
-    else
-        EMBY_PROTO="http"
-    fi
-    
-    # 是否传递源站 Host（反代其他域名时需要）
-    read -p "是否传递源站原始 Host 头? (反代其他域名时选 y) [y/N]: " PASS_HOST
-    PASS_HOST=${PASS_HOST:-N}
-    if [[ "$PASS_HOST" =~ ^[Yy]$ ]]; then
-        PROXY_HOST="$EMBY_HOST"
-    else
-        PROXY_HOST="\\\$host"
-    fi
-    
+
+        # 是否传递源站 Host（反代其他域名时需要）
+        read -p "是否传递源站原始 Host 头? (反代其他域名时选 y) [y/N]: " PASS_HOST
+        PASS_HOST=${PASS_HOST:-N}
+        if [[ "$PASS_HOST" =~ ^[Yy]$ ]]; then
+            PROXY_HOST="$EMBY_HOST"
+        else
+            PROXY_HOST="\\\$host"
+        fi
+
+        SUBDOMAINS+=("$SUBDOMAIN")
+        EMBY_HOSTS+=("$EMBY_HOST")
+        EMBY_PORTS+=("$EMBY_PORT")
+        EMBY_SSLS+=("$EMBY_SSL")
+        EMBY_PROTOS+=("$EMBY_PROTO")
+        PROXY_HOSTS+=("$PROXY_HOST")
+
+    done
+
     # 邮箱 (用于 SSL 证书)
     while true; do
         read -p "请输入邮箱 (用于 SSL 证书申请): " EMAIL
@@ -202,14 +228,56 @@ get_user_input() {
     # 是否启用 SSL
     read -p "是否启用 SSL (HTTPS)? [Y/n]: " ENABLE_SSL
     ENABLE_SSL=${ENABLE_SSL:-Y}
+
+    # CF_Token (用于 SSL 证书)
+    while true; do
+        read -p "请输入CF TOKEN (用于 SSL 证书申请): " TOKEN
+        if [[ -n "$TOKEN" ]]; then
+            break
+        fi
+        print_error "CF TOKEN 不能为空"
+    done
+    export CF_Token="$TOKEN"
+
+    # CF_Zone_ID (用于 SSL 证书)
+    while true; do
+        read -p "请输入CF ZONE ID (用于 SSL 证书申请): " ZONE_ID
+        if [[ -n "$ZONE_ID" ]]; then
+            break
+        fi
+        print_error "CF ZONE ID 不能为空"
+    done
+    export CF_Zone_ID="$ZONE_ID"
+
+    # 域名别名 (用于 SSL 证书)
+    while true; do
+        read -p "请输入ALIAS (用于 SSL 证书申请) (例如: emby.example.com, 需要手动指向此别名): " ALIAS
+        if [[ -n "$ALIAS" ]]; then
+            break
+        fi
+        print_error "ALIAS 不能为空"
+    done
     
     # 确认信息
     echo ""
     print_info "配置信息确认:"
     echo "  域名: $DOMAIN"
-    echo "  Emby 源站: $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT"
+
+    echo "  Emby 源站信息:"
+    for i in "${!SUBDOMAINS[@]}"; do
+        SUBDOMAIN=${SUBDOMAINS[$i]}
+        EMBY_PROTO=${EMBY_PROTOS[$i]}
+        EMBY_HOST=${EMBY_HOSTS[$i]}
+        EMBY_PORT=${EMBY_PORTS[$i]}
+
+        echo "  > $SUBDOMAIN.$DOMAIN  源站: $EMBY_PROTO://$EMBY_HOST:$EMBY_PORT"
+    done
+
     echo "  邮箱: $EMAIL"
     echo "  启用 SSL: $ENABLE_SSL"
+    echo "  CF TOKEN: $TOKEN"
+    echo "  CF ZONE ID: $ZONE_ID"
+    echo "  域名别名: $ALIAS"
     echo ""
     
     read -p "确认以上信息正确? [Y/n]: " CONFIRM
@@ -228,7 +296,22 @@ create_nginx_config_http() {
     mkdir -p /etc/nginx/sites-available
     mkdir -p /etc/nginx/sites-enabled
     mkdir -p /var/www/html/.well-known/acme-challenge
-    
+
+    for i in "${!SUBDOMAINS[@]}"; do
+        SUBDOMAIN=${SUBDOMAINS[$i]}
+        EMBY_PROTO=${EMBY_PROTOS[$i]}
+        EMBY_HOST=${EMBY_HOSTS[$i]}
+        PROXY_HOST=${PROXY_HOSTS[$i]}
+        create_sub_nginx_config_http
+    done
+
+    print_success "全部 Nginx HTTP 配置创建完成"
+}
+
+# 创建子域名 Nginx HTTP 配置（用于证书申请）
+create_sub_nginx_config_http() {
+    print_info "创建 $SUBDOMAIN.$DOMAIN Nginx HTTP 配置..."
+
     # 如果源站是 HTTPS，添加 SSL/SNI 配置（支持 Cloudflare 等 CDN）
     if [[ "$EMBY_PROTO" == "https" ]]; then
         SSL_PROXY_CONFIG="
@@ -240,7 +323,7 @@ create_nginx_config_http() {
         SSL_PROXY_CONFIG=""
     fi
 
-    cat > /etc/nginx/sites-available/emby << EOF
+    cat > /etc/nginx/sites-available/$SUBDOMAIN << EOF
 # Emby 反向代理配置 - HTTP
 server {
     listen 80;
@@ -324,12 +407,28 @@ $SSL_PROXY_CONFIG
 }
 EOF
 
-    print_success "Nginx HTTP 配置创建完成"
+    print_success "$SUBDOMAIN.$DOMAIN Nginx HTTP 配置创建完成"
 }
+
 
 # 创建 Nginx HTTPS 配置
 create_nginx_config_https() {
     print_info "创建 Nginx HTTPS 配置..."
+
+    for i in "${!SUBDOMAINS[@]}"; do
+        SUBDOMAIN=${SUBDOMAINS[$i]}
+        EMBY_PROTO=${EMBY_PROTOS[$i]}
+        EMBY_HOST=${EMBY_HOSTS[$i]}
+        PROXY_HOST=${PROXY_HOSTS[$i]}
+        create_sub_nginx_config_https
+    done
+
+    print_success "全部Nginx HTTPS 配置创建完成"
+}
+
+# 创建子域名 Nginx HTTPS 配置
+create_sub_nginx_config_https() {
+    print_info "创建 $SUBDOMAIN.$DOMAIN Nginx HTTPS 配置..."
     
     # 如果源站是 HTTPS，添加 SSL/SNI 配置（支持 Cloudflare 等 CDN）
     if [[ "$EMBY_PROTO" == "https" ]]; then
@@ -342,14 +441,14 @@ create_nginx_config_https() {
         SSL_PROXY_CONFIG=""
     fi
 
-    cat > /etc/nginx/sites-available/emby << EOF
+    cat > /etc/nginx/sites-available/$SUBDOMAIN << EOF
 # Emby 反向代理配置 - HTTPS
 
 # HTTP 重定向到 HTTPS
 server {
     listen 80;
     listen [::]:80;
-    server_name $DOMAIN;
+    server_name $SUBDOMAIN.$DOMAIN;
     
     # acme.sh 续期验证
     location /.well-known/acme-challenge/ {
@@ -365,7 +464,7 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name $DOMAIN;
+    server_name $SUBDOMAIN.$DOMAIN;
 
     # SSL 证书 (acme.sh)
     ssl_certificate /etc/nginx/ssl/$DOMAIN/fullchain.pem;
@@ -454,7 +553,7 @@ $SSL_PROXY_CONFIG
 }
 EOF
 
-    print_success "Nginx HTTPS 配置创建完成"
+    print_success "$SUBDOMAIN.$DOMAIN Nginx HTTPS 配置创建完成"
 }
 
 # 启用站点配置
@@ -471,7 +570,10 @@ enable_site() {
     rm -f /etc/nginx/sites-enabled/default
     
     # 创建符号链接
-    ln -sf /etc/nginx/sites-available/emby /etc/nginx/sites-enabled/emby
+    for i in "${!SUBDOMAINS[@]}"; do
+        SUBDOMAIN=${SUBDOMAINS[$i]}
+        ln -sf /etc/nginx/sites-available/$SUBDOMAIN /etc/nginx/sites-enabled/$SUBDOMAIN
+    done
     
     # 测试配置
     nginx -t
@@ -490,34 +592,23 @@ obtain_ssl_certificate() {
     systemctl restart nginx
     sleep 2
     
-    # 使用 webroot 方式申请证书
+    # 使用 ssh 方式申请证书
     ~/.acme.sh/acme.sh --issue \
         -d $DOMAIN \
-        --webroot /var/www/html \
+        -d *.$DOMAIN \
+        --challenge-alias $ALIAS \
+        --dns dns_cf \
         --keylength ec-256 \
         --force
-    
+        
     if [ $? -ne 0 ]; then
-        print_warning "webroot 方式失败，尝试 standalone 方式..."
-        
-        # 停止 nginx，使用 standalone 方式
-        systemctl stop nginx
-        
-        ~/.acme.sh/acme.sh --issue \
-            -d $DOMAIN \
-            --standalone \
-            --keylength ec-256 \
-            --force
-        
-        if [ $? -ne 0 ]; then
-            print_error "SSL 证书申请失败"
-            print_info "请检查:"
-            print_info "  1. 域名是否正确解析到此服务器 IP"
-            print_info "  2. 80 端口是否被占用或被防火墙阻止"
-            print_info "  3. 可以运行: curl -I http://$DOMAIN 测试"
-            systemctl start nginx
-            exit 1
-        fi
+        print_error "SSL 证书申请失败"
+        print_info "请检查:"
+        print_info "  1. 域名是否正确解析到此服务器 IP"
+        print_info "  2. 80 端口是否被占用或被防火墙阻止"
+        print_info "  3. 可以运行: curl -I http://$DOMAIN 测试"
+        systemctl start nginx
+        exit 1
     fi
     
     # 安装证书到 nginx 目录
@@ -553,14 +644,21 @@ show_completion_info() {
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    if [[ "$ENABLE_SSL" =~ ^[Yy]$ ]]; then
-        echo -e "  ${CYAN}访问地址:${NC} https://$DOMAIN"
-    else
-        echo -e "  ${CYAN}访问地址:${NC} http://$DOMAIN"
-    fi
-    
-    echo ""
-    echo -e "  ${CYAN}配置文件:${NC} /etc/nginx/sites-available/emby"
+    echo "  域名信息: "
+    for i in "${!SUBDOMAINS[@]}"; do
+        SUBDOMAIN=${SUBDOMAINS[$i]}
+        EMBY_PROTO=${EMBY_PROTOS[$i]}
+        EMBY_HOST=${EMBY_HOSTS[$i]}
+
+        if [[ "$ENABLE_SSL" =~ ^[Yy]$ ]]; then
+            echo -e "    ${CYAN}访问地址:${NC} https://$SUBDOMAIN.$DOMAIN  ${CYAN}源站地址:${NC} $EMBY_PROTO://$EMBY_HOST"
+        else
+            echo -e "    ${CYAN}访问地址:${NC} http://$SUBDOMAIN.$DOMAIN  ${CYAN}源站地址:${NC} $EMBY_PROTO://$EMBY_HOST"
+        fi
+        echo ""
+        echo -e "    ${CYAN}配置文件:${NC} /etc/nginx/sites-available/$SUBDOMAIN"
+    done
+
     echo -e "  ${CYAN}访问日志:${NC} /var/log/nginx/emby_access.log"
     echo -e "  ${CYAN}错误日志:${NC} /var/log/nginx/emby_error.log"
     echo ""
@@ -591,9 +689,18 @@ uninstall_config() {
     systemctl stop nginx 2>/dev/null || true
     
     # 删除配置文件
-    rm -f /etc/nginx/sites-available/emby
-    rm -f /etc/nginx/sites-enabled/emby
     rm -rf /etc/nginx/ssl
+    for file in /etc/nginx/sites-available/*; do
+        if [[ "$(basename "$file")" != "default" ]]; then
+            rm -rf "$file"
+        fi
+    done
+
+    for file in /etc/nginx/sites-enabled/*; do
+        if [[ "$(basename "$file")" != "default" ]]; then
+            rm -rf "$file"
+        fi
+    done
     
     # 恢复默认配置
     if [ -f /etc/nginx/sites-available/default ]; then
@@ -778,13 +885,21 @@ renew_ssl_only() {
     check_root
     
     read -p "请输入域名: " DOMAIN
+    read -p "请输入别名: " ALIAS
     read -p "请输入邮箱: " EMAIL
     
     install_acme
     
     mkdir -p /etc/nginx/ssl/$DOMAIN
     
-    ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256 --force
+    ~/.acme.sh/acme.sh --issue \
+    -d $DOMAIN \
+    -d *.$DOMAIN \
+    --challenge-alias $ALIAS \
+    --dns dns_cf \
+    --keylength ec-256 \
+    --force
+
     
     ~/.acme.sh/acme.sh --install-cert -d $DOMAIN \
         --key-file /etc/nginx/ssl/$DOMAIN/privkey.pem \
@@ -837,9 +952,14 @@ show_status() {
     
     # 配置文件
     echo -e "${CYAN}配置文件:${NC}"
-    if [ -f /etc/nginx/sites-available/emby ]; then
-        echo -e "  Emby 配置: ${GREEN}存在${NC}"
-    else
+    files_exist=false
+    for file in /etc/nginx/sites-available/*; do
+        if [[ "$(basename "$file")" != "default" && -f "$file" ]]; then
+            echo -e "  Emby 配置: ${GREEN}$file 存在${NC}"
+            files_exist=true
+        fi
+    done
+    if [[ "$files_exist" == false ]]; then
         echo -e "  Emby 配置: ${YELLOW}不存在${NC}"
     fi
     
@@ -859,15 +979,18 @@ show_current_config() {
     echo ""
     print_info "========== 当前配置 =========="
     echo ""
-    
-    if [ -f /etc/nginx/sites-available/emby ]; then
-        echo -e "${CYAN}Nginx 配置文件: /etc/nginx/sites-available/emby${NC}"
-        echo "----------------------------------------"
-        cat /etc/nginx/sites-available/emby
-        echo "----------------------------------------"
-    else
-        print_warning "未找到 Emby 配置文件"
-    fi
+
+    for file in /etc/nginx/sites-available/*; do
+        # 排除 default 文件
+        if [[ "$(basename "$file")" != "default" && -f "$file" ]]; then
+            echo -e "${CYAN}Nginx 配置文件: $file${NC}"
+            echo "----------------------------------------"
+            cat "$file"
+            echo "----------------------------------------"
+        else
+            print_warning "未找到配置文件"
+        fi
+    done
     echo ""
 }
 
@@ -921,6 +1044,7 @@ show_help() {
     echo ""
 }
 
+# TODO
 # 脚本入口
 main() {
     print_banner
